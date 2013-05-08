@@ -26,6 +26,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <cstring>
 #include <iomanip>
 #include <node.h>
 #include <node_buffer.h>
@@ -77,8 +78,8 @@ static bool
 SetField(unsigned char &field, Local<Value> &fieldValue)
 {
 	if (!fieldValue->IsUint32() || fieldValue->Uint32Value() > 0xFF) {
-		char *message = "Value must be an unsigned 8-bit integer.";
-		ThrowException(Exception::TypeError(String::New(message)));
+		ThrowException(Exception::TypeError(String::New(
+			"Value must be an unsigned 8-bit integer.")));
 		return false;
 	}
 
@@ -90,8 +91,8 @@ static bool
 SetField(short unsigned int &field, Local<Value> &fieldValue)
 {
 	if (!fieldValue->IsUint32() || fieldValue->Uint32Value() > 0xFFFF) {
-		char *message = "Value must be an unsigned 16-bit integer.";
-		ThrowException(Exception::TypeError(String::New(message)));
+		ThrowException(Exception::TypeError(String::New(
+			"Value must be an unsigned 16-bit integer.")));
 		return false;
 	}
 
@@ -103,8 +104,8 @@ static bool
 SetField(unsigned int &field, Local<Value> &fieldValue)
 {
 	if (!fieldValue->IsUint32()) {
-		char *message = "Value must be an unsigned 32-bit integer.";
-		ThrowException(Exception::TypeError(String::New(message)));
+		ThrowException(Exception::TypeError(String::New(
+			"Value must be an unsigned 32-bit integer.")));
 		return false;
 	}
 
@@ -117,8 +118,8 @@ SetField(unsigned char *field, unsigned int fieldSize,
 	Local<Value> &fieldValue)
 {
 	if (!fieldValue->IsString()) {
-		char *message = "Value must be a string.";
-		ThrowException(Exception::TypeError(String::New(message)));
+		ThrowException(Exception::TypeError(String::New(
+			"Value must be a string.")));
 		return false;
 	}
 
@@ -145,8 +146,8 @@ SetFieldArray(unsigned char *field, unsigned int fieldSize,
 	Local<Value> &fieldValue)
 {
 	if (!fieldValue->IsArray()) {
-		char *message = "Value must be an array.";
-		ThrowException(Exception::TypeError(String::New(message)));
+		ThrowException(Exception::TypeError(String::New(
+			"Value must be an array.")));
 		return false;
 	}
 
@@ -210,8 +211,8 @@ static bool
 SetBuffer(void **field, Local<Value> &bufferValue)
 {
 	if (!Buffer::HasInstance(bufferValue)) {
-		char *message = "Value must be a buffer.";
-		ThrowException(Exception::TypeError(String::New(message)));
+		ThrowException(Exception::TypeError(String::New(
+			"Value must be a buffer.")));
 		return false;
 	}
 
@@ -329,7 +330,8 @@ Command::Exec(const Arguments &args)
 	// Create worker (new thread).
 	ExecData *execData = new ExecData(self, callback);
 	int status = uv_queue_work(uv_default_loop(),
-		&execData->m_request, ExecWork, ExecWorkAfter);
+		&execData->m_request,
+		ExecWork, (uv_after_work_cb) ExecWorkAfter);
 	assert(status == 0);
 	self->Ref();
 
@@ -499,9 +501,8 @@ Command::Set(const Arguments &args)
 		break;
 	case RETURN_CODE:
 		if (CB_PHYS_FILE_NR(pcb)) {
-			char *message = "This field is used as database ID.";
-			return ThrowException(
-				Exception::Error(String::New(message)));
+			return ThrowException(Exception::Error(String::New(
+				"This field is used as database ID.")));
 		}
 		SetField(pcb->cb_return_code, fieldValue);
 		break;
@@ -619,9 +620,8 @@ Command::Get(const Arguments &args)
 		return scope.Close(GetField(pcb->cb_file_nr));
 	case RETURN_CODE:
 		if (CB_PHYS_FILE_NR(pcb)) {
-			char *message = "This field is used as database ID.";
-			return ThrowException(
-				Exception::Error(String::New(message)));
+			return ThrowException(Exception::Error(String::New(
+				"This field is used as database ID.")));
 		}
 		return scope.Close(GetField(pcb->cb_return_code));
 	case ISN:

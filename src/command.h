@@ -30,7 +30,7 @@
 #define NODE_ADABAS_SRC_COMMAND_H
 
 extern "C" {
-#include <adabas.h>
+#include <adabasx.h>
 }
 #include <node.h>
 #include <string>

@@ -79,6 +79,7 @@ async.series([
 	function final(error) {
 		if (error) {
 			util.error(error.toString());
+			console.log(query.toString());
 		}
 
 		if (outputFile) {
