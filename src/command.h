@@ -92,6 +92,15 @@ private:
 	 */
 	void *m_buffers[5];
 
+	// Adabas thread identifier.
+	uv_thread_t m_adabasThreadId;
+	// Adabas thread event loop.
+	uv_loop_t *m_adabasThreadLoop;
+	// Message handles for Adabas thread.
+	uv_async_t m_adabasThreadMsgExit;
+	uv_async_t m_adabasThreadMsgExec;
+	uv_async_t m_adabasThreadMsgExecFinished;
+
 	// Result of Adabas direct call.
 	int m_callResult;
 
@@ -104,17 +113,32 @@ public:
 
 protected:
 	Command();
+	~Command();
 
+	// Initialize object instance.
+	void Open(void);
 	// Clear object data.
 	void Clear(void);
+	// Cleanup.
+	void Cleanup(void);
+
+	// Adabas thread event loop.
+	static void AdabasThreadEventLoop(void *data);
+	// Process message 'exit' in Adabas thread.
+	static void AdabasThreadCallbackExit(uv_async_t *handle, int status);
+	// Process message 'exec' in Adabas thread.
+	static void AdabasThreadCallbackExec(uv_async_t *handle, int status);
+	// Process message 'exec finished' in main thread.
+	static void CallbackExecFinished(uv_async_t *handle, int status);
 
 	// Create new instance of this object.
 	static Handle<Value> New(const Arguments &args);
-
+	// Initialize object instance.
+	static Handle<Value> Open(const Arguments &args);
+	// Close instance of this object.
+	static Handle<Value> Close(const Arguments &args);
 	// Execute Adabas direct call command.
 	static Handle<Value> Exec(const Arguments &args);
-	static void ExecWork(uv_work_t *req);
-	static void ExecWorkAfter(uv_work_t *req);
 
 	// Clear field in Adabas control block.
 	static Handle<Value> Clear(const Arguments &args);
@@ -124,6 +148,7 @@ protected:
 	static Handle<Value> Get(const Arguments &args);
 
 	// Convert Adabas control block to string representation.
+	std::string ToString(void);
 	static Handle<Value> ToString(const Arguments &args);
 };
 

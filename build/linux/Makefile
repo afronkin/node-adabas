@@ -4,7 +4,6 @@ NODE_PATH=../../lib:./build/Release:../../share/test
 .PHONY: configure build clean
 
 all: configure build
-	@echo Done.
 
 configure:
 	@node-gyp configure
@@ -16,5 +15,5 @@ clean:
 	@node-gyp clean
 
 verify:
-#	@env NODE_PATH=$(NODE_PATH) node ../../share/test/test1.js
+	@env NODE_PATH=$(NODE_PATH) node ../../share/test/test1.js
 	@env NODE_PATH=$(NODE_PATH) node ../../share/test/test2.js

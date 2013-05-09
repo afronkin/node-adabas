@@ -25,8 +25,8 @@ function readRecord(callback) {
 			return callback(error);
 		}
 
-		fs.write(outputFile, query.recordBuffer, 0, 10);
-		fs.write(outputFile, '\n');
+		fs.writeSync(outputFile, query.recordBuffer, 0, 60);
+		fs.writeSync(outputFile, '\n');
 
 		process.nextTick(function() {
 			readRecord(callback);
@@ -65,7 +65,7 @@ async.series([
 		query.set(adabas.DB_ID, 88);
 		query.set(adabas.FILE_NO, 12);
 
-		query.formatBuffer = new Buffer('AW,10,A.');
+		query.formatBuffer = new Buffer('AB,60,A.');
 		query.set(adabas.FORMAT_BUFFER, query.formatBuffer);
 		query.set(adabas.FORMAT_BUFFER_LENGTH, query.formatBuffer.length);
 
@@ -95,6 +95,7 @@ async.series([
 		query.set(adabas.COMMAND_CODE, 'CL');
 		query.set(adabas.DB_ID, 88);
 		query.exec(function(error) {
+				query.close();
 				if (error) {
 					util.error(error.toString());
 				}

@@ -255,6 +255,36 @@ BinaryToHex(unsigned char *data, unsigned int dataSize)
  */
 Command::Command() : ObjectWrap(), m_ready(true)
 {
+	Open();
+}
+
+/*
+ * Destructor.
+ */
+Command::~Command()
+{
+	Cleanup();
+}
+
+/*
+ * Initialize object instance.
+ */
+void
+Command::Open(void)
+{
+	m_adabasThreadLoop = uv_loop_new();
+	uv_async_init(m_adabasThreadLoop, &m_adabasThreadMsgExit,
+		AdabasThreadCallbackExit);
+	uv_async_init(m_adabasThreadLoop, &m_adabasThreadMsgExec,
+		AdabasThreadCallbackExec);
+	uv_async_init(uv_default_loop(), &m_adabasThreadMsgExecFinished,
+		CallbackExecFinished);
+	m_adabasThreadMsgExec.data = (void *) this;
+	m_adabasThreadMsgExit.data = (void *) this;
+
+	uv_thread_create(&m_adabasThreadId, AdabasThreadEventLoop,
+		(void *) this);
+
 	Clear();
 }
 
@@ -274,77 +304,44 @@ Command::Clear(void)
 }
 
 /*
- * Create new instance of this object.
- */
-Handle<Value>
-Command::New(const Arguments &args)
-{
-	HandleScope scope;
-
-	// Check if this function were called from wrong place.
-	if (!args.IsConstructCall()) {
-		Local<String> message =
-			String::New("Use the new operator to create objects");
-		return ThrowException(Exception::Error(message));
-	}
-
-	// Create new C++ object and wrap it in JS object.
-	Command *self = new Command();
-	self->Wrap(args.This());
-
-	return args.This();
-}
-
-/*
- * Execute Adabas direct call command asyncronously (using thread pool).
- */
-Handle<Value>
-Command::Exec(const Arguments &args)
-{
-	HandleScope scope;
-	Command *self = ObjectWrap::Unwrap<Command>(args.This());
-
-	// Check if another command already running.
-	if (!self->m_ready) {
-		Local<String> message = String::New(
-			"Another command already running.");
-		return ThrowException(Exception::Error(message));
-	}
-
-	// Get Adabas buffers.
-	/*
-	AdabasBuffer adabasBuffers[5];
-	for (int i = 0; i < 5; i++) {
-		ArgumentToBuffer(args, 0, adabasBuffers[0]);
-	} */
-
-	// Get callback function.
-	Local<Function> callback;
-	if (args.Length() > 0 && args[0]->IsFunction()) {
-		callback = Local<Function>::Cast(args[0]);
-	}
-
-	// Set flag to false (prevent parallel execution of commands).
-	self->m_ready = false;
-
-	// Create worker (new thread).
-	ExecData *execData = new ExecData(self, callback);
-	int status = uv_queue_work(uv_default_loop(),
-		&execData->m_request,
-		ExecWork, (uv_after_work_cb) ExecWorkAfter);
-	assert(status == 0);
-	self->Ref();
-
-	return args.This();
-}
-
-/*
- * The "do work" callback for Adabas direct call.
+ * Cleanup.
  */
 void
-Command::ExecWork(uv_work_t *req)
+Command::Cleanup(void)
 {
-	ExecData *execData = static_cast<ExecData *>(req->data);
+	uv_async_send(&m_adabasThreadMsgExit);
+	uv_thread_join(&m_adabasThreadId);
+}
+
+/*
+ * Adabas thread event loop.
+ */
+void
+Command::AdabasThreadEventLoop(void *data)
+{
+	Command *self = static_cast<Command *>(data);
+	uv_run(self->m_adabasThreadLoop, UV_RUN_DEFAULT);
+}
+
+/*
+ * Process message 'exit' in Adabas thread.
+ */
+void
+Command::AdabasThreadCallbackExit(uv_async_t *handle, int status)
+{
+	Command *self = static_cast<Command *>(handle->data);
+	uv_close((uv_handle_t *) &self->m_adabasThreadMsgExit, NULL);
+	uv_close((uv_handle_t *) &self->m_adabasThreadMsgExec, NULL);
+	uv_close((uv_handle_t *) &self->m_adabasThreadMsgExecFinished, NULL);
+}
+
+/*
+ * Process message 'exec' in Adabas thread.
+ */
+void
+Command::AdabasThreadCallbackExec(uv_async_t *handle, int status)
+{
+	ExecData *execData = static_cast<ExecData *>(handle->data);
 	Command *self = execData->m_command;
 
 	// Execute Adabas direct call.
@@ -359,18 +356,20 @@ Command::ExecWork(uv_work_t *req)
 	fprintf(stderr, "exec: %.2s %d\n",
 		self->m_cb.cb_cmd_code,
 		self->m_cb.cb_return_code);
-	sleep(2);
+	sleep(1);
 #endif // 0
+
+	self->m_adabasThreadMsgExecFinished.data = (void *) execData;
+	uv_async_send(&self->m_adabasThreadMsgExecFinished);
 }
 
 /*
- * The "after work" callback for Adabas direct call.
+ * Process message 'exec finished' in main thread.
  */
 void
-Command::ExecWorkAfter(uv_work_t *req)
+Command::CallbackExecFinished(uv_async_t *handle, int status)
 {
-	HandleScope scope;
-	ExecData *execData = static_cast<ExecData *>(req->data);
+	ExecData *execData = static_cast<ExecData *>(handle->data);
 	Command *self = execData->m_command;
 
 #if 0
@@ -427,6 +426,99 @@ Command::ExecWorkAfter(uv_work_t *req)
 	// Cleanup.
 	delete execData;
 	self->Unref();
+}
+
+/*
+ * Create new instance of this object.
+ */
+Handle<Value>
+Command::New(const Arguments &args)
+{
+	HandleScope scope;
+
+	// Check if this function were called from wrong place.
+	if (!args.IsConstructCall()) {
+		Local<String> message =
+			String::New("Use the new operator to create objects");
+		return ThrowException(Exception::Error(message));
+	}
+
+	// Create new C++ object and wrap it in JS object.
+	Command *self = new Command();
+	self->Wrap(args.This());
+
+	return scope.Close(args.This());
+}
+
+/*
+ * Initialize object instance.
+ */
+Handle<Value>
+Command::Open(const Arguments &args)
+{
+	HandleScope scope;
+	Command *self = ObjectWrap::Unwrap<Command>(args.This());
+
+	self->Open();
+
+	return scope.Close(Undefined());
+}
+
+/*
+ * Finalize object instance.
+ */
+Handle<Value>
+Command::Close(const Arguments &args)
+{
+	HandleScope scope;
+	Command *self = ObjectWrap::Unwrap<Command>(args.This());
+
+	self->Cleanup();
+
+	return scope.Close(Undefined());
+}
+
+/*
+ * Execute Adabas direct call command asyncronously (using thread pool).
+ */
+Handle<Value>
+Command::Exec(const Arguments &args)
+{
+	HandleScope scope;
+	Command *self = ObjectWrap::Unwrap<Command>(args.This());
+
+	// Check if another command already running.
+	if (!self->m_ready) {
+		Local<String> message = String::New(
+			"Another command already running.");
+		return ThrowException(Exception::Error(message));
+	}
+
+	// Get Adabas buffers.
+	/*
+	AdabasBuffer adabasBuffers[5];
+	for (int i = 0; i < 5; i++) {
+		ArgumentToBuffer(args, 0, adabasBuffers[0]);
+	} */
+
+	// Get callback function.
+	Local<Function> callback;
+	if (args.Length() > 0 && args[0]->IsFunction()) {
+		callback = Local<Function>::Cast(args[0]);
+	}
+
+	// Set flag to false (prevent parallel execution of commands).
+	self->m_ready = false;
+
+	// Send message 'exec' to Adabas thread.
+	ExecData *execData = new ExecData(self, callback);
+	self->m_adabasThreadMsgExec.data = (void *) execData;
+	uv_async_send(&self->m_adabasThreadMsgExec);
+
+	// Increase reference number of object instance.
+	self->Ref();
+
+	return scope.Close(args.This());
 }
 
 /*
@@ -680,12 +772,10 @@ Command::Get(const Arguments &args)
  * Convert Adabas control block to string representation.
  * 'cb' stands for 'control block' (as in Adabas headers).
  */
-Handle<Value>
-Command::ToString(const Arguments &args)
+std::string
+Command::ToString(void)
 {
-	HandleScope scope;
-	Command *self = ObjectWrap::Unwrap<Command>(args.This());
-	CB_PAR &cb = self->m_cb;
+	CB_PAR &cb = m_cb;
 	std::ostringstream buf;
 
 	buf.setf(std::ios_base::left);
@@ -747,5 +837,17 @@ Command::ToString(const Arguments &args)
 		it++;
 	}
 
-	return scope.Close(String::New(str.c_str()));
+	return str;
+}
+
+/*
+ * Convert Adabas control block to string representation.
+ * 'cb' stands for 'control block' (as in Adabas headers).
+ */
+Handle<Value>
+Command::ToString(const Arguments &args)
+{
+	HandleScope scope;
+	Command *self = ObjectWrap::Unwrap<Command>(args.This());
+	return scope.Close(String::New(self->ToString().c_str()));
 }

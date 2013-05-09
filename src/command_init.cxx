@@ -44,10 +44,12 @@ Command::Init(Handle<Object> target)
 	constructor_template->InstanceTemplate()->SetInternalFieldCount(1);
 	constructor_template->SetClassName(String::NewSymbol("Command"));
 
-	NODE_SET_PROTOTYPE_METHOD(constructor_template, "exec", Exec);
 	NODE_SET_PROTOTYPE_METHOD(constructor_template, "clear", Clear);
-	NODE_SET_PROTOTYPE_METHOD(constructor_template, "set", Set);
+	NODE_SET_PROTOTYPE_METHOD(constructor_template, "close", Close);
+	NODE_SET_PROTOTYPE_METHOD(constructor_template, "exec", Exec);
 	NODE_SET_PROTOTYPE_METHOD(constructor_template, "get", Get);
+	NODE_SET_PROTOTYPE_METHOD(constructor_template, "open", Open);
+	NODE_SET_PROTOTYPE_METHOD(constructor_template, "set", Set);
 	NODE_SET_PROTOTYPE_METHOD(constructor_template, "toString", ToString);
 
 	// Constants for codes of fields.
