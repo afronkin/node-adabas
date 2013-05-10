@@ -282,6 +282,10 @@ Command::Open(void)
 	m_adabasThreadMsgExec.data = (void *) this;
 	m_adabasThreadMsgExit.data = (void *) this;
 
+	// These messages should not keep loop alive.
+	uv_unref((uv_handle_t *) &m_adabasThreadMsgExec);
+	uv_unref((uv_handle_t *) &m_adabasThreadMsgExecFinished);
+
 	uv_thread_create(&m_adabasThreadId, AdabasThreadEventLoop,
 		(void *) this);
 
@@ -426,6 +430,8 @@ Command::CallbackExecFinished(uv_async_t *handle, int status)
 	// Cleanup.
 	delete execData;
 	self->Unref();
+	uv_unref((uv_handle_t *) &self->m_adabasThreadMsgExec);
+	uv_unref((uv_handle_t *) &self->m_adabasThreadMsgExecFinished);
 }
 
 /*
@@ -513,6 +519,8 @@ Command::Exec(const Arguments &args)
 	// Send message 'exec' to Adabas thread.
 	ExecData *execData = new ExecData(self, callback);
 	self->m_adabasThreadMsgExec.data = (void *) execData;
+	uv_ref((uv_handle_t *) &self->m_adabasThreadMsgExec);
+	uv_ref((uv_handle_t *) &self->m_adabasThreadMsgExecFinished);
 	uv_async_send(&self->m_adabasThreadMsgExec);
 
 	// Increase reference number of object instance.
