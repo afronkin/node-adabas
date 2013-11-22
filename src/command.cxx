@@ -373,6 +373,7 @@ Command::AdabasThreadCallbackExec(uv_async_t *handle, int status)
 void
 Command::CallbackExecFinished(uv_async_t *handle, int status)
 {
+	HandleScope scope;
 	ExecData *execData = static_cast<ExecData *>(handle->data);
 	Command *self = execData->m_command;
 
@@ -400,6 +401,7 @@ Command::CallbackExecFinished(uv_async_t *handle, int status)
 	}
 
 	// Execute callback function with result code of Adabas direct call.
+	bool callbackIsCalled = false;
 	if (!execData->m_callback.IsEmpty()) {
 		Local<Value> callback_args[1] = { exception };
 
@@ -408,22 +410,25 @@ Command::CallbackExecFinished(uv_async_t *handle, int status)
 		if (try_catch.HasCaught()) {
 			FatalException(try_catch);
 		}
+		callbackIsCalled = true;
 	}
 
 	// Emit event with result code of Adabas direct call.
-	// EMIT_EVENT(self->handle_, 2, event_args);
-	Local<Function> emitCallback = Local<Function>::Cast(
-		self->handle_->Get(String::NewSymbol("emit")));
-	if (!emitCallback.IsEmpty()) {
-		Local<Value> event_args[] = {
-			String::New("exec"),
-			exception
-		};
+	if (!callbackIsCalled) {
+		// EMIT_EVENT(self->handle_, 2, event_args);
+		Local<Function> emitCallback = Local<Function>::Cast(
+			self->handle_->Get(String::NewSymbol("emit")));
+		if (!emitCallback.IsEmpty()) {
+			Local<Value> event_args[] = {
+				String::New("exec"),
+				exception
+			};
 
-		TryCatch try_catch;
-		emitCallback->Call(self->handle_, 2, event_args);
-		if (try_catch.HasCaught()) {
-			FatalException(try_catch);
+			TryCatch try_catch;
+			emitCallback->Call(self->handle_, 2, event_args);
+			if (try_catch.HasCaught()) {
+				FatalException(try_catch);
+			}
 		}
 	}
 
