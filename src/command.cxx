@@ -384,8 +384,6 @@ Command::CallbackExecFinished(uv_async_t *handle, int status)
 	}
 #endif // 0
 
-	self->m_ready = true;
-
 	// Create 'exception' for callback and event functions.
 	Local<Value> exception;
 	if (self->m_callResult == ADA_SUCCESS
@@ -400,22 +398,28 @@ Command::CallbackExecFinished(uv_async_t *handle, int status)
 		exception = Exception::Error(String::New(message));
 	}
 
-	// Execute callback function with result code of Adabas direct call.
-	bool callbackIsCalled = false;
+	Handle<Function> callback;
 	if (!execData->m_callback.IsEmpty()) {
+		callback = execData->m_callback;
+	}
+
+	uv_unref((uv_handle_t *) &self->m_adabasThreadMsgExec);
+	uv_unref((uv_handle_t *) &self->m_adabasThreadMsgExecFinished);
+	delete execData;
+	self->m_ready = true;
+	self->Unref();
+
+	if (!callback.IsEmpty()) {
+		// Execute callback function with Adabas result code.
 		Local<Value> callback_args[1] = { exception };
 
 		TryCatch try_catch;
-		execData->m_callback->Call(self->handle_, 1, callback_args);
+		callback->Call(self->handle_, 1, callback_args);
 		if (try_catch.HasCaught()) {
 			FatalException(try_catch);
 		}
-		callbackIsCalled = true;
-	}
-
-	// Emit event with result code of Adabas direct call.
-	if (!callbackIsCalled) {
-		// EMIT_EVENT(self->handle_, 2, event_args);
+	} else {
+		// Emit event with Adabas result code.
 		Local<Function> emitCallback = Local<Function>::Cast(
 			self->handle_->Get(String::NewSymbol("emit")));
 		if (!emitCallback.IsEmpty()) {
@@ -431,12 +435,6 @@ Command::CallbackExecFinished(uv_async_t *handle, int status)
 			}
 		}
 	}
-
-	// Cleanup.
-	delete execData;
-	self->Unref();
-	uv_unref((uv_handle_t *) &self->m_adabasThreadMsgExec);
-	uv_unref((uv_handle_t *) &self->m_adabasThreadMsgExecFinished);
 }
 
 /*
