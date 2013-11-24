@@ -1,14 +1,14 @@
 PATH:=$(PATH):/opt/node/bin:/opt/node/lib/node_modules/npm/bin/node-gyp-bin
 NODE_PATH=../../lib:./build/Release:../../share/test
 
-.PHONY: configure build clean
+.PHONY: configure extension clean
 
-all: configure build
+all: configure extension
 
 configure:
 	@node-gyp configure
 
-build:
+extension:
 	@env LINK=g++ node-gyp build
 
 clean:
@@ -16,4 +16,3 @@ clean:
 
 verify:
 	@env NODE_PATH=$(NODE_PATH) node ../../share/test/test1.js
-	@env NODE_PATH=$(NODE_PATH) node ../../share/test/test2.js

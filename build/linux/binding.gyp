@@ -7,12 +7,12 @@
         '../../src/command.cxx',
         '../../src/command_init.cxx'
       ],
-      'cflags_cc': ['-I$(ACLDIR)/$(ACLVERS)/inc'],
-      'link_settings': {
-        'libraries': [
-          '$(ACLDIR)/$(ACLVERS)/lib/adabasx.o'
-        ]
-      }
+      'include_dirs': [
+        '$(ACLDIR)/$(ACLVERS)/inc'
+      ],
+      'libraries': [
+        '$(ACLDIR)/$(ACLVERS)/lib/adabasx.o'
+      ]
     }
   ]
 }
