@@ -29,9 +29,14 @@
 #ifndef NODE_ADABAS_SRC_COMMAND_H
 #define NODE_ADABAS_SRC_COMMAND_H
 
+#ifndef CE_VOID
+#define CE_VOID void
+#endif // CE_VOID
+
 extern "C" {
 #include <adabasx.h>
 }
+
 #include <node.h>
 #include <string>
 

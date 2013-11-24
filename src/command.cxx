@@ -32,7 +32,11 @@
 #include <node_buffer.h>
 #include <sstream>
 #include <stdlib.h>
+
+#if !defined(WIN32)
 #include <unistd.h>
+#endif // WIN32
+
 #include "command.h"
 
 namespace node_adabas {
@@ -128,7 +132,7 @@ SetField(unsigned char *field, unsigned int fieldSize,
 	unsigned int bufferLength = stringValue.length();
 	if (bufferLength != fieldSize) {
 		char message[80];
-		snprintf(message, sizeof(message),
+		sprintf(message,
 			"Value must be a string of %d characters.", fieldSize);
 		ThrowException(Exception::TypeError(String::New(message)));
 		return false;
@@ -154,7 +158,7 @@ SetFieldArray(unsigned char *field, unsigned int fieldSize,
 	Local<Array> array = Local<Array>::Cast(fieldValue);
 	if (array->Length() != fieldSize) {
 		char message[80];
-		snprintf(message, sizeof(message),
+		sprintf(message,
 			"Value must be an array with %d elements.", fieldSize);
 		ThrowException(Exception::TypeError(String::New(message)));
 		return false;
