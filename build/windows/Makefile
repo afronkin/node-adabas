@@ -1,5 +1,5 @@
 PATH=$(PATH);C:\Program Files\nodejs\node_modules\npm\bin\node-gyp-bin;$(ACLSDK)\bin
-NODE_PATH=..\..\lib;.\build\Release;..\..\share\test
+NODE_PATH=.\build\Release
 
 all: configure extension
 
@@ -13,4 +13,5 @@ clean:
 	@node-gyp clean
 
 verify:
-	@node ../../share/test/test1.js
+	@set NODE_PATH=$(NODE_PATH)
+	@node ..\..\test\test1.js

@@ -1,4 +1,4 @@
-var adabas = require('adabas');
+var adabas = require('../');
 var async = require('async');
 var fs = require('fs');
 var util = require('util');

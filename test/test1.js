@@ -1,4 +1,4 @@
-var adabas = require('adabas');
+var adabas = require('../');
 
 console.log("[1] Create Adabas command.");
 var query = new adabas.Command();
