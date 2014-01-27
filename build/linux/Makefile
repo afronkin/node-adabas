@@ -1,5 +1,5 @@
 PATH:=$(PATH):/opt/node/bin:/opt/node/lib/node_modules/npm/bin/node-gyp-bin
-NODE_PATH=../../lib:./build/Release:../../share/test
+NODE_PATH=./build/Release
 
 .PHONY: configure extension clean
 
@@ -15,4 +15,4 @@ clean:
 	@node-gyp clean
 
 verify:
-	@env NODE_PATH=$(NODE_PATH) node ../../share/test/test1.js
+	@env NODE_PATH=$(NODE_PATH) node ../../test/test1.js
