@@ -1,5 +1,5 @@
 PATH=$(PATH);C:\Program Files\nodejs\node_modules\npm\bin\node-gyp-bin;$(ACLSDK)\bin
-NODE_PATH=.\build\Release
+LIB_DIR=..\..\lib
 
 all: configure extension
 
@@ -8,10 +8,12 @@ configure:
 
 extension:
 	@node-gyp build
+	@mkdir $(LIB_DIR)
+	@copy build\Release\adabas.node $(LIB_DIR)
 
 clean:
 	@node-gyp clean
+	@rmdir /S /Q $(LIB_DIR)
 
 verify:
-	@set NODE_PATH=$(NODE_PATH)
 	@node ..\..\test\test1.js

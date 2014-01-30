@@ -1,4 +1,4 @@
-var adabas = module.exports = exports = require('adabas.node');
+var adabas = module.exports = exports = require('./lib/adabas.node');
 var EventEmitter = require('events').EventEmitter;
 
 inherits(adabas.Command, EventEmitter);
