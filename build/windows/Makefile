@@ -8,6 +8,7 @@ configure:
 
 extension:
 	@node-gyp build
+	@rmdir /S /Q $(LIB_DIR)
 	@mkdir $(LIB_DIR)
 	@copy build\Release\adabas.node $(LIB_DIR)
 
