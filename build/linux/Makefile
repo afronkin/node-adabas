@@ -1,5 +1,5 @@
 PATH:=$(PATH):/opt/node/bin:/opt/node/lib/node_modules/npm/bin/node-gyp-bin
-NODE_PATH=./build/Release
+LIB_DIR=../../lib
 
 .PHONY: configure extension clean
 
@@ -10,9 +10,13 @@ configure:
 
 extension:
 	@env LINK=g++ node-gyp build
+	@rm -Rf $(LIB_DIR)
+	@mkdir $(LIB_DIR)
+	@cp build/Release/adabas.node $(LIB_DIR)
 
 clean:
 	@node-gyp clean
+	@rm -Rf $(LIB_DIR)
 
 verify:
-	@env NODE_PATH=$(NODE_PATH) node ../../test/test1.js
+	@node ../../test/test1.js
