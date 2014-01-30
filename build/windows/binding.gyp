@@ -1,7 +1,7 @@
 {
   'targets': [
     {
-      'target_name': 'node_adabas',
+      'target_name': 'adabas',
       'sources': [
         '../../src/node_adabas.cxx',
         '../../src/command.cxx',

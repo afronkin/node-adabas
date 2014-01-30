@@ -49,4 +49,4 @@ RegisterModule(v8::Handle<Object> target) {
 
 } // namespace
 
-NODE_MODULE(node_adabas, RegisterModule)
+NODE_MODULE(adabas, RegisterModule)
