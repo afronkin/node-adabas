@@ -1,121 +1,51 @@
-var adabas = require('../');
-var async = require('async');
-var fs = require('fs');
-var util = require('util');
+var assert = require('assert');
 
-var query = new adabas.Command();
-var outputFile = null;
-var recNo = 0;
-var startTime, currentTime, previousTime;
-
-function readRecord(callback) {
-	recNo++;
-
-	currentTime = new Date().getTime();
-	if (currentTime - previousTime >= 1000) {
-		process.stderr.write('\rRecord: ' + recNo);
-		previousTime = currentTime;
-	}
-
-	query.exec(function(error) {
-		if (error) {
-			if (query.get(adabas.RETURN_CODE) === adabas.ADA_EOF) {
-				return callback();
-			}
-			return callback(error);
-		}
-
-		fs.writeSync(outputFile, query.recordBuffer, 0, 60);
-		fs.writeSync(outputFile, '\n');
-
-		process.nextTick(function() {
-			readRecord(callback);
-		});
-	});
+try {
+  var adabas = require('adabas');
+} catch (err) {
+  var adabas = require('..');
 }
 
-startTime = new Date().getTime();
-previousTime = startTime;
+var db = new adabas.Adabas();
+var query = new adabas.Command();
 
-async.series([
-	function openDatabase(callback) {
-		query.clear();
-		query.set(adabas.COMMAND_CODE, 'OP');
-		query.set(adabas.DB_ID, 88);
-		query.recordBuffer = new Buffer('UPD=12.');
-		query.set(adabas.RECORD_BUFFER, query.recordBuffer);
-		query.set(adabas.RECORD_BUFFER_LENGTH, query.recordBuffer.length);
+var recordBuffer = new Buffer('UPD=12.');
+query
+  .clear()
+  .setCommandCode('OP')
+  .setDbId(88)
+  .setRecordBufferLength(recordBuffer.length)
+  .setRecordBuffer(recordBuffer);
+var rc = db.exec(query);
+assert(rc === adabas.ADA_SUCCESS);
 
-		query.exec(function(error) {
-			return callback(error);
-		});
-	},
+var formatBuffer = new Buffer('AO,250,A.');
+var recordBuffer = new Buffer(250);
+query
+  .clear()
+  .setCommandCode('L2')
+  .setCommandId('EXPT')
+  .setDbId(88)
+  .setFileNo(12)
+  .setFormatBufferLength(formatBuffer.length)
+  .setFormatBuffer(formatBuffer)
+  .setRecordBufferLength(recordBuffer.length)
+  .setRecordBuffer(recordBuffer)
 
-	function openOutputFile(callback) {
-		fs.open('test.dat', 'w', 0666, function(error, file) {
-			outputFile = file;
-			return callback(error);;
-		});
-	},
+for (var recNo = 1; db.exec(query) === adabas.ADA_SUCCESS; recNo++) {
+  if (query.getReturnCode() !== adabas.ADA_NORMAL) {
+    assert(query.getReturnCode() === adabas.ADA_EOF);
+    break;
+  }
+}
 
-	function readRecords(callback) {
-		query.clear();
-		query.set(adabas.COMMAND_CODE, 'L2');
-		query.set(adabas.COMMAND_ID, 'EXPT');
-		query.set(adabas.DB_ID, 88);
-		query.set(adabas.FILE_NO, 12);
+console.error('Readed records: %d', recNo - 1);
 
-		query.formatBuffer = new Buffer('AB,60,A.');
-		query.set(adabas.FORMAT_BUFFER, query.formatBuffer);
-		query.set(adabas.FORMAT_BUFFER_LENGTH, query.formatBuffer.length);
+query
+  .clear()
+  .setCommandCode('CL')
+  .setDbId(88);
+var rc = db.exec(query);
+assert(rc === adabas.ADA_SUCCESS);
 
-		query.recordBuffer = new Buffer(250);
-		query.set(adabas.RECORD_BUFFER, query.recordBuffer);
-		query.set(adabas.RECORD_BUFFER_LENGTH, query.recordBuffer.length);
-
-		readRecord(callback);
-	}],
-
-	function final(error) {
-		if (error) {
-			util.error(error.toString());
-			console.log(query.toString());
-		}
-
-		if (outputFile) {
-			fs.close(outputFile, function(error) {
-				if (error) {
-					util.error(error.toString());
-				}
-				outputFile = null;
-			});
-		}
-
-		query.clear();
-		query.set(adabas.COMMAND_CODE, 'CL');
-		query.set(adabas.DB_ID, 88);
-		query.exec(function(error) {
-				query.close();
-				if (error) {
-					util.error(error.toString());
-				}
-		});
-
-		currentTime = new Date().getTime();
-		var usedTime = (currentTime - startTime) / 1000;
-		var usedHours = Math.floor(usedTime / 3600);
-		var usedMinutes = Math.floor((usedTime - (usedHours * 3600)) / 60);
-		var usedSeconds = Math.floor(usedTime - (usedHours * 3600) - (usedMinutes * 60));
-
-		process.stderr.write('\r');
-		process.stderr.write('Readed records: ' + (recNo - 1) + '\n');
-		process.stderr.write('Done in ' + usedHours
-			+ ':' + String("0" + usedMinutes).slice(-2)
-			+ ':' + String("0" + usedSeconds).slice(-2) + '.\n');
-	});
-
-/*
-query.on('exec', function(error) {
-	console.log('Event received [' +  error + ']');
-});
-*/
+db.close();

@@ -26,13 +26,8 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if 0
-#if !defined(BUILDING_NODE_EXTENSION)
-#define BUILDING_NODE_EXTENSION
-#endif // BUILDING_NODE_EXTENSION
-#endif // 0
-
 #include <node.h>
+#include "adabas.h"
 #include "command.h"
 
 using namespace node_adabas;
@@ -40,11 +35,12 @@ using namespace node_adabas;
 namespace {
 
 /*
- * Initialize module.
+ * Initializes module.
  */
 void
-RegisterModule(v8::Handle<Object> target) {
-	Command::Init(target);
+RegisterModule(v8::Handle<v8::Object> exports) {
+	Adabas::Initialize(exports);
+	Command::Initialize(exports);
 }
 
 } // namespace

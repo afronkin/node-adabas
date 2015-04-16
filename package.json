@@ -1,15 +1,11 @@
 {
   "name": "adabas",
   "description": "Node.js binding to Adabas",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "author": "Alexander Fronkin <alexander.fronkin@afronkin.net>",
   "repository": "https://github.com/afronkin/node-adabas.git",
   "main": "index",
-  "scripts": {
-    "test1": "node test/test1.js",
-    "test2": "node test/test2.js"
-  },
   "engines": {
-    "node": ">= 0.8.0"
+    "node": ">= 0.10.22"
   }
 }

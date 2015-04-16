@@ -1,31 +1,3 @@
-/*
- * Copyright (c) 2013, Alexander Fronkin
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
- * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
- * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
- * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
-
 #ifndef NODE_ADABAS_SRC_COMMAND_H
 #define NODE_ADABAS_SRC_COMMAND_H
 
@@ -38,20 +10,15 @@ extern "C" {
 }
 
 #include <node.h>
-#include <string>
-
-using namespace v8;
-using namespace node;
+#include <vector>
 
 namespace node_adabas {
 
-class Command;
-
 /*
- * Adabas direct call command class.
+ * Wrapper class for the Adabas command.
  */
-class Command : public ObjectWrap {
-private:
+class Command : public node::ObjectWrap {
+protected:
 	// Codes of Adabas control block fields.
 	enum {
 		COMMAND_CODE,
@@ -85,8 +52,9 @@ private:
 	};
 
 private:
-	static Persistent<FunctionTemplate> constructor_template;
+	static v8::Persistent<v8::Function> constructor;
 
+public:
 	/*
 	 * Adabas direct call control block ('cb' is used in Adabas headers).
 	 */
@@ -97,64 +65,126 @@ private:
 	 */
 	void *m_buffers[5];
 
-	// Adabas thread identifier.
-	uv_thread_t m_adabasThreadId;
-	// Adabas thread event loop.
-	uv_loop_t *m_adabasThreadLoop;
-	// Message handles for Adabas thread.
-	uv_async_t m_adabasThreadMsgExit;
-	uv_async_t m_adabasThreadMsgExec;
-	uv_async_t m_adabasThreadMsgExecFinished;
+private:
+	Command();
 
-	// Result of Adabas direct call.
-	int m_callResult;
+	static v8::Handle<v8::Value> New(const v8::Arguments& args);
+	static v8::Handle<v8::Value> Clear(const v8::Arguments& args);
+	static v8::Handle<v8::Value> ToString(const v8::Arguments& args);
 
-	// This flag is false if Adabas direct call command executing.
-	bool m_ready;
+	static v8::Handle<v8::Value>
+		SetCommandCode(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetCommandId(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetDbId(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetFileNo(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetReturnCode(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetIsn(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetIsnLowerLimit(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetIsnQuantity(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetFormatBufferLength(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetRecordBufferLength(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetSearchBufferLength(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetValueBufferLength(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetIsnBufferLength(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetCommandOption1(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetCommandOption2(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetAddition1(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetAddition2(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetAddition3(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetAddition4(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetAddition5(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetCommandTime(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetUserArea(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetFormatBuffer(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetRecordBuffer(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetSearchBuffer(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetValueBuffer(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		SetIsnBuffer(const v8::Arguments& args);
+
+	static v8::Handle<v8::Value>
+		GetCommandCode(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetCommandId(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetDbId(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetFileNo(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetReturnCode(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetIsn(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetIsnLowerLimit(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetIsnQuantity(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetFormatBufferLength(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetRecordBufferLength(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetSearchBufferLength(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetValueBufferLength(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetIsnBufferLength(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetCommandOption1(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetCommandOption2(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetAddition1(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetAddition2(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetAddition3(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetAddition4(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetAddition5(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetCommandTime(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetUserArea(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetFormatBuffer(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetRecordBuffer(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetSearchBuffer(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetValueBuffer(const v8::Arguments& args);
+	static v8::Handle<v8::Value>
+		GetIsnBuffer(const v8::Arguments& args);
 
 public:
-	// Initialize module class.
-	static void Init(Handle<Object> target);
-
-protected:
-	Command();
-	~Command();
-
-	// Initialize object instance.
-	void Open(void);
-	// Clear object data.
-	void Clear(void);
-	// Cleanup.
-	void Cleanup(void);
-
-	// Adabas thread event loop.
-	static void AdabasThreadEventLoop(void *data);
-	// Process message 'exit' in Adabas thread.
-	static void AdabasThreadCallbackExit(uv_async_t *handle, int status);
-	// Process message 'exec' in Adabas thread.
-	static void AdabasThreadCallbackExec(uv_async_t *handle, int status);
-	// Process message 'exec finished' in main thread.
-	static void CallbackExecFinished(uv_async_t *handle, int status);
-
-	// Create new instance of this object.
-	static Handle<Value> New(const Arguments &args);
-	// Initialize object instance.
-	static Handle<Value> Open(const Arguments &args);
-	// Close instance of this object.
-	static Handle<Value> Close(const Arguments &args);
-	// Execute Adabas direct call command.
-	static Handle<Value> Exec(const Arguments &args);
-
-	// Clear field in Adabas control block.
-	static Handle<Value> Clear(const Arguments &args);
-	// Set value of specified field in Adabas control block.
-	static Handle<Value> Set(const Arguments &args);
-	// Get value of specified field in Adabas control block.
-	static Handle<Value> Get(const Arguments &args);
-
-	// Convert Adabas control block to string representation.
-	std::string ToString(void);
-	static Handle<Value> ToString(const Arguments &args);
+	static void Initialize(v8::Handle<v8::Object> exports);
+	static v8::Handle<v8::Value> NewInstance(const v8::Arguments& args);
 };
 
 } // namespace node_adabas

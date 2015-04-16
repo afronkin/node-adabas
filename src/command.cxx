@@ -1,229 +1,142 @@
-/*
- * Copyright (c) 2013, Alexander Fronkin
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
- * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
- * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
- * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
-
 #include <cstring>
 #include <iomanip>
 #include <node.h>
 #include <node_buffer.h>
 #include <sstream>
-#include <stdlib.h>
-
-#if !defined(WIN32)
-#include <unistd.h>
-#endif // WIN32
 
 #include "command.h"
+#include "v8_helpers.h"
 
 namespace node_adabas {
 
-// Adabas buffer record.
-struct AdabasBuffer {
-	Local<Object> object;
-	char *data;
-	int length;
-};
-typedef struct AdabasBuffer AdabasBuffer;
-
-// Private data for command 'exec'.
-struct ExecData {
-	uv_work_t m_request;
-	Command *m_command;
-	Persistent<Function> m_callback;
-
-	ExecData(Command *command, Handle<Function> callback)
-		: m_command(command)
-	{
-		m_request.data = this;
-		m_callback = Persistent<Function>::New(callback);
-	}
-
-	virtual ~ExecData()
-	{
-		m_callback.Dispose();
-	}
-};
-typedef struct ExecData ExecData;
-
-} // namespace node_adabas
-
-using namespace node_adabas;
-
-Persistent<FunctionTemplate> Command::constructor_template;
+v8::Persistent<v8::Function> Command::constructor;
 
 /*
- * Set field in Adabac control block.
+ * Constructor.
  */
-static bool
-SetField(unsigned char &field, Local<Value> &fieldValue)
+Command::Command() : ObjectWrap()
 {
-	if (!fieldValue->IsUint32() || fieldValue->Uint32Value() > 0xFF) {
-		ThrowException(Exception::TypeError(String::New(
-			"Value must be an unsigned 8-bit integer.")));
-		return false;
+	memset(&m_cb, 0, sizeof(CB_PAR));
+	for (int i = 0; i < 5; i++) {
+		m_buffers[i] = NULL;
 	}
-
-	field = (unsigned char) fieldValue->Uint32Value();
-	return true;
-}
-
-static bool
-SetField(short unsigned int &field, Local<Value> &fieldValue)
-{
-	if (!fieldValue->IsUint32() || fieldValue->Uint32Value() > 0xFFFF) {
-		ThrowException(Exception::TypeError(String::New(
-			"Value must be an unsigned 16-bit integer.")));
-		return false;
-	}
-
-	field = fieldValue->Uint32Value();
-	return true;
-}
-
-static bool
-SetField(unsigned int &field, Local<Value> &fieldValue)
-{
-	if (!fieldValue->IsUint32()) {
-		ThrowException(Exception::TypeError(String::New(
-			"Value must be an unsigned 32-bit integer.")));
-		return false;
-	}
-
-	field = fieldValue->Uint32Value();
-	return true;
-}
-
-static bool
-SetField(unsigned char *field, unsigned int fieldSize,
-	Local<Value> &fieldValue)
-{
-	if (!fieldValue->IsString()) {
-		ThrowException(Exception::TypeError(String::New(
-			"Value must be a string.")));
-		return false;
-	}
-
-	String::Value stringValue(fieldValue);
-	uint16_t *buffer = *stringValue;
-	unsigned int bufferLength = stringValue.length();
-	if (bufferLength != fieldSize) {
-		char message[80];
-		sprintf(message,
-			"Value must be a string of %d characters.", fieldSize);
-		ThrowException(Exception::TypeError(String::New(message)));
-		return false;
-	}
-
-	for (unsigned int i = 0; i < fieldSize; i++) {
-		field[i] = (uint8_t) buffer[i];
-	}
-
-	return true;
-}
-
-static bool
-SetFieldArray(unsigned char *field, unsigned int fieldSize,
-	Local<Value> &fieldValue)
-{
-	if (!fieldValue->IsArray()) {
-		ThrowException(Exception::TypeError(String::New(
-			"Value must be an array.")));
-		return false;
-	}
-
-	Local<Array> array = Local<Array>::Cast(fieldValue);
-	if (array->Length() != fieldSize) {
-		char message[80];
-		sprintf(message,
-			"Value must be an array with %d elements.", fieldSize);
-		ThrowException(Exception::TypeError(String::New(message)));
-		return false;
-	}
-
-	for (unsigned int i = 0; i < fieldSize; i++) {
-		field[i] = array->Get(i)->Uint32Value();
-	}
-
-	return true;
 }
 
 /*
- * Get field from Adabas control block.
+ * Initializes the Node.js class.
  */
-static Local<Integer>
-GetField(unsigned char &field)
+void
+Command::Initialize(v8::Handle<v8::Object> exports)
 {
-	return Integer::New((int) field);
-}
+	// Prepare constructor template.
+	v8::Local<v8::FunctionTemplate> t = v8::FunctionTemplate::New(New);
+	t->SetClassName(v8::String::NewSymbol("Command"));
+	t->InstanceTemplate()->SetInternalFieldCount(1);
 
-static Local<Integer>
-GetField(short unsigned int &field)
-{
-	return Integer::New(field);
-}
+	// Prototype.
+	V8_METHOD("clear", Clear);
+	V8_METHOD("toString", ToString);
+	V8_METHOD("setCommandCode", SetCommandCode);
+	V8_METHOD("setCommandId", SetCommandId);
+	V8_METHOD("setDbId", SetDbId);
+	V8_METHOD("setFileNo", SetFileNo);
+	V8_METHOD("setReturnCode", SetReturnCode);
+	V8_METHOD("setIsn", SetIsn);
+	V8_METHOD("setIsnLowerLimit", SetIsnLowerLimit);
+	V8_METHOD("setIsnQuantity", SetIsnQuantity);
+	V8_METHOD("setFormatBufferLength", SetFormatBufferLength);
+	V8_METHOD("setRecordBufferLength", SetRecordBufferLength);
+	V8_METHOD("setSearchBufferLength", SetSearchBufferLength);
+	V8_METHOD("setValueBufferLength", SetValueBufferLength);
+	V8_METHOD("setIsnBufferLength", SetIsnBufferLength);
+	V8_METHOD("setCommandOption1", SetCommandOption1);
+	V8_METHOD("setCommandOption2", SetCommandOption2);
+	V8_METHOD("setAddition1", SetAddition1);
+	V8_METHOD("setAddition2", SetAddition2);
+	V8_METHOD("setAddition3", SetAddition3);
+	V8_METHOD("setAddition4", SetAddition4);
+	V8_METHOD("setAddition5", SetAddition5);
+	V8_METHOD("setCommandTime", SetCommandTime);
+	V8_METHOD("setUserArea", SetUserArea);
+	V8_METHOD("setFormatBuffer", SetFormatBuffer);
+	V8_METHOD("setRecordBuffer", SetRecordBuffer);
+	V8_METHOD("setSearchBuffer", SetSearchBuffer);
+	V8_METHOD("setValueBuffer", SetValueBuffer);
+	V8_METHOD("setIsnBuffer", SetIsnBuffer);
+	V8_METHOD("getCommandCode", GetCommandCode);
+	V8_METHOD("getCommandId", GetCommandId);
+	V8_METHOD("getDbId", GetDbId);
+	V8_METHOD("getFileNo", GetFileNo);
+	V8_METHOD("getReturnCode", GetReturnCode);
+	V8_METHOD("getIsn", GetIsn);
+	V8_METHOD("getIsnLowerLimit", GetIsnLowerLimit);
+	V8_METHOD("getIsnQuantity", GetIsnQuantity);
+	V8_METHOD("getFormatBufferLength", GetFormatBufferLength);
+	V8_METHOD("getRecordBufferLength", GetRecordBufferLength);
+	V8_METHOD("getSearchBufferLength", GetSearchBufferLength);
+	V8_METHOD("getValueBufferLength", GetValueBufferLength);
+	V8_METHOD("getIsnBufferLength", GetIsnBufferLength);
+	V8_METHOD("getCommandOption1", GetCommandOption1);
+	V8_METHOD("getCommandOption2", GetCommandOption2);
+	V8_METHOD("getAddition1", GetAddition1);
+	V8_METHOD("getAddition2", GetAddition2);
+	V8_METHOD("getAddition3", GetAddition3);
+	V8_METHOD("getAddition4", GetAddition4);
+	V8_METHOD("getAddition5", GetAddition5);
+	V8_METHOD("getCommandTime", GetCommandTime);
+	V8_METHOD("getUserArea", GetUserArea);
+	V8_METHOD("getFormatBuffer", GetFormatBuffer);
+	V8_METHOD("getRecordBuffer", GetRecordBuffer);
+	V8_METHOD("getSearchBuffer", GetSearchBuffer);
+	V8_METHOD("getValueBuffer", GetValueBuffer);
+	V8_METHOD("getIsnBuffer", GetIsnBuffer);
 
-static Local<Integer>
-GetField(unsigned int &field)
-{
-	return Integer::New(field);
-}
-
-static Local<String>
-GetField(unsigned char *field, unsigned int fieldSize)
-{
-	return String::New((char *) field, fieldSize);
-}
-
-static Local<Array>
-GetFieldArray(unsigned char *field, unsigned int fieldSize)
-{
-	Local<Array> array = Array::New(fieldSize);
-	for (unsigned int i = 0; i < fieldSize; i++) {
-		array->Set(i, Integer::New((int) field[i]));
-	}
-	return array;
+	constructor = v8::Persistent<v8::Function>::New(t->GetFunction());
+	exports->Set(v8::String::NewSymbol("Command"), constructor);
 }
 
 /*
- * Set pointer to buffer data.
+ * Creates new instance of the object.
  */
-static bool
-SetBuffer(void **field, Local<Value> &bufferValue)
+v8::Handle<v8::Value>
+Command::New(const v8::Arguments& args)
 {
-	if (!Buffer::HasInstance(bufferValue)) {
-		ThrowException(Exception::TypeError(String::New(
-			"Value must be a buffer.")));
-		return false;
+	v8::HandleScope scope;
+
+	if (!args.IsConstructCall()) {
+		return scope.Close(constructor->NewInstance(0, NULL));
 	}
 
-	Local<Object> bufferObject = bufferValue->ToObject();
-	*field = Buffer::Data(bufferObject);
+	Command* self = new Command();
+	self->Wrap(args.This());
+	return args.This();
+}
 
-	return true;
+/*
+ * Creates new instance of the object.
+ */
+v8::Handle<v8::Value>
+Command::NewInstance(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	return scope.Close(constructor->NewInstance(0, NULL));
+}
+
+/*
+ * Clears command fields and buffers.
+ */
+v8::Handle<v8::Value>
+Command::Clear(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	memset(&self->m_cb, 0, sizeof(CB_PAR));
+	for (int i = 0; i < 5; i++) {
+		self->m_buffers[i] = NULL;
+	}
+
+	return scope.Close(args.This());
 }
 
 /*
@@ -232,11 +145,11 @@ SetBuffer(void **field, Local<Value> &bufferValue)
 static std::string
 BinaryToString(unsigned char *data, unsigned int dataSize)
 {
-	std::string result;
+	std::string s;
 	for (unsigned int i = 0; i < dataSize; i++) {
-		result += (int) data[i] < 32 ? '.' : data[i];
+		s += (int) data[i] < 32 ? '.' : data[i];
 	}
-	return result;
+	return s;
 }
 
 /*
@@ -245,624 +158,1073 @@ BinaryToString(unsigned char *data, unsigned int dataSize)
 static std::string
 BinaryToHex(unsigned char *data, unsigned int dataSize)
 {
-	std::string result;
+	std::string s;
 	char buf[4];
 	for (unsigned int i = 0; i < dataSize; i++) {
 		sprintf(buf, i == 0 ? "%02X" : " %02X", data[i]);
-		result.append(buf);
+		s.append(buf);
 	}
-	return result;
+	return s;
 }
 
 /*
- * Constructor.
- */
-Command::Command() : ObjectWrap(), m_ready(true)
-{
-	Open();
-}
-
-/*
- * Destructor.
- */
-Command::~Command()
-{
-	Cleanup();
-}
-
-/*
- * Initialize object instance.
- */
-void
-Command::Open(void)
-{
-	m_adabasThreadLoop = uv_loop_new();
-	uv_async_init(m_adabasThreadLoop, &m_adabasThreadMsgExit,
-		AdabasThreadCallbackExit);
-	uv_async_init(m_adabasThreadLoop, &m_adabasThreadMsgExec,
-		AdabasThreadCallbackExec);
-	uv_async_init(uv_default_loop(), &m_adabasThreadMsgExecFinished,
-		CallbackExecFinished);
-	m_adabasThreadMsgExec.data = (void *) this;
-	m_adabasThreadMsgExit.data = (void *) this;
-
-	// These messages should not keep loop alive.
-	uv_unref((uv_handle_t *) &m_adabasThreadMsgExec);
-	uv_unref((uv_handle_t *) &m_adabasThreadMsgExecFinished);
-
-	uv_thread_create(&m_adabasThreadId, AdabasThreadEventLoop,
-		(void *) this);
-
-	Clear();
-}
-
-/*
- * Clear object data.
- */
-void
-Command::Clear(void)
-{
-	memset(&m_cb, 0, sizeof(CB_PAR));
-
-	for (int i = 0; i < 5; i++) {
-		m_buffers[i] = NULL;
-	}
-
-	m_callResult = ADA_SUCCESS;
-}
-
-/*
- * Cleanup.
- */
-void
-Command::Cleanup(void)
-{
-	uv_async_send(&m_adabasThreadMsgExit);
-	uv_thread_join(&m_adabasThreadId);
-}
-
-/*
- * Adabas thread event loop.
- */
-void
-Command::AdabasThreadEventLoop(void *data)
-{
-	Command *self = static_cast<Command *>(data);
-	uv_run(self->m_adabasThreadLoop, UV_RUN_DEFAULT);
-}
-
-/*
- * Process message 'exit' in Adabas thread.
- */
-void
-Command::AdabasThreadCallbackExit(uv_async_t *handle, int status)
-{
-	Command *self = static_cast<Command *>(handle->data);
-	uv_close((uv_handle_t *) &self->m_adabasThreadMsgExit, NULL);
-	uv_close((uv_handle_t *) &self->m_adabasThreadMsgExec, NULL);
-	uv_close((uv_handle_t *) &self->m_adabasThreadMsgExecFinished, NULL);
-}
-
-/*
- * Process message 'exec' in Adabas thread.
- */
-void
-Command::AdabasThreadCallbackExec(uv_async_t *handle, int status)
-{
-	ExecData *execData = static_cast<ExecData *>(handle->data);
-	Command *self = execData->m_command;
-
-	// Execute Adabas direct call.
-	self->m_callResult = adabas(&self->m_cb,
-		self->m_buffers[0],
-		self->m_buffers[1],
-		self->m_buffers[2],
-		self->m_buffers[3],
-		self->m_buffers[4]);
-
-#if 0
-	fprintf(stderr, "exec: %.2s %d\n",
-		self->m_cb.cb_cmd_code,
-		self->m_cb.cb_return_code);
-	sleep(1);
-#endif // 0
-
-	self->m_adabasThreadMsgExecFinished.data = (void *) execData;
-	uv_async_send(&self->m_adabasThreadMsgExecFinished);
-}
-
-/*
- * Process message 'exec finished' in main thread.
- */
-void
-Command::CallbackExecFinished(uv_async_t *handle, int status)
-{
-	HandleScope scope;
-	ExecData *execData = static_cast<ExecData *>(handle->data);
-	Command *self = execData->m_command;
-
-#if 0
-	for (int i = 0; i < 5; i++) {
-		fprintf(stderr, "buf%d:%.*s\n", i, self->m_cb.cb_buf_lng[i],
-			(char *) self->m_buffers[i]);
-	}
-#endif // 0
-
-	// Create 'exception' for callback and event functions.
-	Local<Value> exception;
-	if (self->m_callResult == ADA_SUCCESS
-		&& self->m_cb.cb_return_code == ADA_NORMAL)
-	{
-		exception = Local<Value>::New(Null());
-	} else {
-		char message[80];
-		sprintf(message,
-			"Adabas direct call failed (command=%.2s, code=%d).",
-			self->m_cb.cb_cmd_code, self->m_cb.cb_return_code);
-		exception = Exception::Error(String::New(message));
-	}
-
-	Handle<Function> callback;
-	if (!execData->m_callback.IsEmpty()) {
-		callback = execData->m_callback;
-	}
-
-	uv_unref((uv_handle_t *) &self->m_adabasThreadMsgExec);
-	uv_unref((uv_handle_t *) &self->m_adabasThreadMsgExecFinished);
-	delete execData;
-	self->m_ready = true;
-	self->Unref();
-
-	if (!callback.IsEmpty()) {
-		// Execute callback function with Adabas result code.
-		Local<Value> callback_args[1] = { exception };
-
-		TryCatch try_catch;
-		callback->Call(self->handle_, 1, callback_args);
-		if (try_catch.HasCaught()) {
-			FatalException(try_catch);
-		}
-	} else {
-		// Emit event with Adabas result code.
-		Local<Function> emitCallback = Local<Function>::Cast(
-			self->handle_->Get(String::NewSymbol("emit")));
-		if (!emitCallback.IsEmpty()) {
-			Local<Value> event_args[] = {
-				String::New("exec"),
-				exception
-			};
-
-			TryCatch try_catch;
-			emitCallback->Call(self->handle_, 2, event_args);
-			if (try_catch.HasCaught()) {
-				FatalException(try_catch);
-			}
-		}
-	}
-}
-
-/*
- * Create new instance of this object.
- */
-Handle<Value>
-Command::New(const Arguments &args)
-{
-	HandleScope scope;
-
-	// Check if this function were called from wrong place.
-	if (!args.IsConstructCall()) {
-		Local<String> message =
-			String::New("Use the new operator to create objects");
-		return ThrowException(Exception::Error(message));
-	}
-
-	// Create new C++ object and wrap it in JS object.
-	Command *self = new Command();
-	self->Wrap(args.This());
-
-	return scope.Close(args.This());
-}
-
-/*
- * Initialize object instance.
- */
-Handle<Value>
-Command::Open(const Arguments &args)
-{
-	HandleScope scope;
-	Command *self = ObjectWrap::Unwrap<Command>(args.This());
-
-	self->Open();
-
-	return scope.Close(Undefined());
-}
-
-/*
- * Finalize object instance.
- */
-Handle<Value>
-Command::Close(const Arguments &args)
-{
-	HandleScope scope;
-	Command *self = ObjectWrap::Unwrap<Command>(args.This());
-
-	self->Cleanup();
-
-	return scope.Close(Undefined());
-}
-
-/*
- * Execute Adabas direct call command asyncronously (using thread pool).
- */
-Handle<Value>
-Command::Exec(const Arguments &args)
-{
-	HandleScope scope;
-	Command *self = ObjectWrap::Unwrap<Command>(args.This());
-
-	// Check if another command already running.
-	if (!self->m_ready) {
-		Local<String> message = String::New(
-			"Another command already running.");
-		return ThrowException(Exception::Error(message));
-	}
-
-	// Get Adabas buffers.
-	/*
-	AdabasBuffer adabasBuffers[5];
-	for (int i = 0; i < 5; i++) {
-		ArgumentToBuffer(args, 0, adabasBuffers[0]);
-	} */
-
-	// Get callback function.
-	Local<Function> callback;
-	if (args.Length() > 0 && args[0]->IsFunction()) {
-		callback = Local<Function>::Cast(args[0]);
-	}
-
-	// Set flag to false (prevent parallel execution of commands).
-	self->m_ready = false;
-
-	// Send message 'exec' to Adabas thread.
-	ExecData *execData = new ExecData(self, callback);
-	self->m_adabasThreadMsgExec.data = (void *) execData;
-	uv_ref((uv_handle_t *) &self->m_adabasThreadMsgExec);
-	uv_ref((uv_handle_t *) &self->m_adabasThreadMsgExecFinished);
-	uv_async_send(&self->m_adabasThreadMsgExec);
-
-	// Increase reference number of object instance.
-	self->Ref();
-
-	return scope.Close(args.This());
-}
-
-/*
- * Clear field in Adabas control block.
- */
-Handle<Value>
-Command::Clear(const Arguments &args)
-{
-	HandleScope scope;
-	Command *self = ObjectWrap::Unwrap<Command>(args.This());
-
-	if (!self->m_ready) {
-		Local<String> message = String::New(
-			"Command already running.");
-		return ThrowException(Exception::Error(message));
-	}
-
-	self->Clear();
-	return True();
-}
-
-/*
- * Set value of specified field in Adabas control block.
- */
-Handle<Value>
-Command::Set(const Arguments &args)
-{
-	HandleScope scope;
-	Command *self = ObjectWrap::Unwrap<Command>(args.This());
-
-	if (!self->m_ready) {
-		Local<String> message = String::New(
-			"Command already running.");
-		return ThrowException(Exception::Error(message));
-	}
-
-	if (args.Length() != 2) {
-		Local<String> message = String::New(
-			"Invalid number of arguments.");
-		return ThrowException(Exception::SyntaxError(message));
-	}
-	if (!args[0]->IsUint32()) {
-		Local<String> message = String::New(
-			"[fieldCode] must be an 32-bit unsigned integer.");
-		return ThrowException(Exception::TypeError(message));
-	}
-
-	int fieldCode = args[0]->Uint32Value();
-	Local<Value> fieldValue = args[1];
-	CB_PAR *pcb = &self->m_cb;
-	short unsigned int dbId, fileNo;
-
-	switch (fieldCode) {
-	case COMMAND_CODE:
-		SetField(pcb->cb_cmd_code, sizeof(pcb->cb_cmd_code),
-			fieldValue);
-		break;
-	case COMMAND_ID:
-		SetField(pcb->cb_cmd_id, L_CID, fieldValue);
-		break;
-	case DB_ID:
-		SetField(dbId, fieldValue);
-		fileNo = CB_PHYS_FILE_NR(pcb)
-			? pcb->alt_cb_file_nr : pcb->cb_file_nr;
-		CB_SET_FD(pcb, dbId, fileNo);
-		break;
-	case FILE_NO:
-		SetField(fileNo, fieldValue);
-		dbId = CB_PHYS_FILE_NR(pcb)
-			? pcb->alt_cb_db_id : pcb->cb_db_id;
-		CB_SET_FD(pcb, dbId, fileNo);
-		break;
-	case RETURN_CODE:
-		if (CB_PHYS_FILE_NR(pcb)) {
-			return ThrowException(Exception::Error(String::New(
-				"This field is used as database ID.")));
-		}
-		SetField(pcb->cb_return_code, fieldValue);
-		break;
-	case ISN:
-		SetField(pcb->cb_isn, fieldValue);
-		break;
-	case ISN_LOWER_LIMIT:
-		SetField(pcb->cb_isn_ll, fieldValue);
-		break;
-	case ISN_QUANTITY:
-		SetField(pcb->cb_isn_quantity, fieldValue);
-		break;
-	case FORMAT_BUFFER_LENGTH:
-		SetField(pcb->cb_fmt_buf_lng, fieldValue);
-		break;
-	case RECORD_BUFFER_LENGTH:
-		SetField(pcb->cb_rec_buf_lng, fieldValue);
-		break;
-	case SEARCH_BUFFER_LENGTH:
-		SetField(pcb->cb_sea_buf_lng, fieldValue);
-		break;
-	case VALUE_BUFFER_LENGTH:
-		SetField(pcb->cb_val_buf_lng, fieldValue);
-		break;
-	case ISN_BUFFER_LENGTH:
-		SetField(pcb->cb_isn_buf_lng, fieldValue);
-		break;
-	case COMMAND_OPTION1:
-		SetField(pcb->cb_cop1, fieldValue);
-		break;
-	case COMMAND_OPTION2:
-		SetField(pcb->cb_cop2, fieldValue);
-		break;
-	case ADDITION1:
-		SetFieldArray(pcb->cb_add1, CB_L_AD1, fieldValue);
-		break;
-	case ADDITION2:
-		SetFieldArray(pcb->cb_add2, CB_L_AD2, fieldValue);
-		break;
-	case ADDITION3:
-		SetFieldArray(pcb->cb_add3, CB_L_AD3, fieldValue);
-		break;
-	case ADDITION4:
-		SetFieldArray(pcb->cb_add4, CB_L_AD4, fieldValue);
-		break;
-	case ADDITION5:
-		SetFieldArray(pcb->cb_add5, CB_L_AD5, fieldValue);
-		break;
-	case COMMAND_TIME:
-		SetField(pcb->cb_cmd_time, fieldValue);
-		break;
-	case USER_AREA:
-		SetFieldArray(pcb->cb_user_area, sizeof(pcb->cb_user_area),
-			fieldValue);
-		break;
-	case FORMAT_BUFFER:
-		SetBuffer(&self->m_buffers[0], fieldValue);
-		break;
-	case RECORD_BUFFER:
-		SetBuffer(&self->m_buffers[1], fieldValue);
-		break;
-	case SEARCH_BUFFER:
-		SetBuffer(&self->m_buffers[2], fieldValue);
-		break;
-	case VALUE_BUFFER:
-		SetBuffer(&self->m_buffers[3], fieldValue);
-		break;
-	case ISN_BUFFER:
-		SetBuffer(&self->m_buffers[4], fieldValue);
-		break;
-	}
-
-	return True();
-}
-
-/*
- * Get value of specified field in Adabas control block.
- */
-Handle<Value>
-Command::Get(const Arguments &args)
-{
-	HandleScope scope;
-	Command *self = ObjectWrap::Unwrap<Command>(args.This());
-
-	if (args.Length() != 1) {
-		Local<String> message = String::New(
-			"Invalid number of arguments.");
-		return ThrowException(Exception::SyntaxError(message));
-	}
-	if (!args[0]->IsUint32()) {
-		Local<String> message = String::New(
-			"[fieldCode] must be an 32-bit unsigned integer.");
-		return ThrowException(Exception::TypeError(message));
-	}
-
-	int fieldCode = args[0]->Uint32Value();
-	CB_PAR *pcb = &self->m_cb;
-	Local<Array> arrayValue;
-
-	switch (fieldCode) {
-	case COMMAND_CODE:
-		return scope.Close(GetField(pcb->cb_cmd_code,
-			sizeof(pcb->cb_cmd_code)));
-	case COMMAND_ID:
-		return scope.Close(GetField(pcb->cb_cmd_id, L_CID));
-	case DB_ID:
-		if (CB_PHYS_FILE_NR(pcb)) {
-			return scope.Close(GetField(pcb->alt_cb_db_id));
-		}
-		return scope.Close(GetField(pcb->cb_db_id));
-	case FILE_NO:
-		if (CB_PHYS_FILE_NR(pcb)) {
-			return scope.Close(GetField(pcb->alt_cb_file_nr));
-		}
-		return scope.Close(GetField(pcb->cb_file_nr));
-	case RETURN_CODE:
-		if (CB_PHYS_FILE_NR(pcb)) {
-			return ThrowException(Exception::Error(String::New(
-				"This field is used as database ID.")));
-		}
-		return scope.Close(GetField(pcb->cb_return_code));
-	case ISN:
-		return scope.Close(GetField(pcb->cb_isn));
-	case ISN_LOWER_LIMIT:
-		return scope.Close(GetField(pcb->cb_isn_ll));
-	case ISN_QUANTITY:
-		return scope.Close(GetField(pcb->cb_isn_quantity));
-	case FORMAT_BUFFER_LENGTH:
-		return scope.Close(GetField(pcb->cb_fmt_buf_lng));
-	case RECORD_BUFFER_LENGTH:
-		return scope.Close(GetField(pcb->cb_rec_buf_lng));
-	case SEARCH_BUFFER_LENGTH:
-		return scope.Close(GetField(pcb->cb_sea_buf_lng));
-	case VALUE_BUFFER_LENGTH:
-		return scope.Close(GetField(pcb->cb_val_buf_lng));
-	case ISN_BUFFER_LENGTH:
-		return scope.Close(GetField(pcb->cb_isn_buf_lng));
-	case COMMAND_OPTION1:
-		return scope.Close(GetField(pcb->cb_cop1));
-	case COMMAND_OPTION2:
-		return scope.Close(GetField(pcb->cb_cop2));
-	case ADDITION1:
-		return scope.Close(GetFieldArray(pcb->cb_add1, CB_L_AD1));
-	case ADDITION2:
-		return scope.Close(GetFieldArray(pcb->cb_add2, CB_L_AD2));
-	case ADDITION3:
-		return scope.Close(GetFieldArray(pcb->cb_add3, CB_L_AD3));
-	case ADDITION4:
-		return scope.Close(GetFieldArray(pcb->cb_add4, CB_L_AD4));
-	case ADDITION5:
-		return scope.Close(GetFieldArray(pcb->cb_add5, CB_L_AD5));
-	case COMMAND_TIME:
-		return scope.Close(GetField(pcb->cb_cmd_time));
-	case USER_AREA:
-		return scope.Close(GetFieldArray(pcb->cb_user_area,
-			sizeof(pcb->cb_user_area)));
-	case FORMAT_BUFFER:
-		break;
-	case RECORD_BUFFER:
-		break;
-	case SEARCH_BUFFER:
-		break;
-	case VALUE_BUFFER:
-		break;
-	case ISN_BUFFER:
-		break;
-	}
-
-	Local<String> message = String::New(
-		"Invalid code of field specified.");
-	return ThrowException(Exception::RangeError(message));
-}
-
-/*
- * Convert Adabas control block to string representation.
+ * Converts Adabas control block to string representation.
  * 'cb' stands for 'control block' (as in Adabas headers).
  */
-std::string
-Command::ToString(void)
+v8::Handle<v8::Value>
+Command::ToString(const v8::Arguments& args)
 {
-	CB_PAR &cb = m_cb;
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	CB_PAR& cb = self->m_cb;
 	std::ostringstream buf;
 
 	buf.setf(std::ios_base::left);
 
 	buf << "Command Code     : "
 		<< std::setw(10) << BinaryToString(cb.cb_cmd_code, 2)
-		<< BinaryToHex(cb.cb_cmd_code, 2) << std::endl;
+		<< BinaryToHex(cb.cb_cmd_code, 2) << "\n";
 	buf << "Command Id       : "
 		<< std::setw(10) << BinaryToString(cb.cb_cmd_id, L_CID)
-		<< BinaryToHex(cb.cb_cmd_id, L_CID) << std::endl;
+		<< BinaryToHex(cb.cb_cmd_id, L_CID) << "\n";
 	buf << "File Number      : "
 		<< (CB_PHYS_FILE_NR(&cb) ? cb.alt_cb_file_nr : cb.cb_file_nr)
-		<< std::endl;
+		<< "\n";
 	buf << "Database Id      : "
 		<< (CB_PHYS_FILE_NR(&cb) ? cb.alt_cb_db_id : cb.cb_db_id)
-		<< std::endl;
-	buf << "Response Code    : " << cb.cb_return_code << std::endl;
-	buf << "Isn              : " << cb.cb_isn << std::endl;
-	buf << "Isn Lower Limit  : " << cb.cb_isn_ll << std::endl;
-	buf << "Isn Quantity     : " << cb.cb_isn_quantity << std::endl;
-	buf << "FB Length        : " << cb.cb_fmt_buf_lng << std::endl;
-	buf << "RB Length        : " << cb.cb_rec_buf_lng << std::endl;
-	buf << "SB Length        : " << cb.cb_sea_buf_lng << std::endl;
-	buf << "VB Length        : " << cb.cb_val_buf_lng << std::endl;
-	buf << "IB Length        : " << cb.cb_isn_buf_lng << std::endl;
+		<< "\n";
+	buf << "Response Code    : " << cb.cb_return_code << "\n";
+	buf << "Isn              : " << cb.cb_isn << "\n";
+	buf << "Isn Lower Limit  : " << cb.cb_isn_ll << "\n";
+	buf << "Isn Quantity     : " << cb.cb_isn_quantity << "\n";
+	buf << "FB Length        : " << cb.cb_fmt_buf_lng << "\n";
+	buf << "RB Length        : " << cb.cb_rec_buf_lng << "\n";
+	buf << "SB Length        : " << cb.cb_sea_buf_lng << "\n";
+	buf << "VB Length        : " << cb.cb_val_buf_lng << "\n";
+	buf << "IB Length        : " << cb.cb_isn_buf_lng << "\n";
 	buf << "Command Option 1 : "
 		<< std::setw(10) << BinaryToString(&cb.cb_cop1, 1)
-		<< BinaryToHex(&cb.cb_cop1, 1) << std::endl;
+		<< BinaryToHex(&cb.cb_cop1, 1) << "\n";
 	buf << "Command Option 2 : "
 		<< std::setw(10) << BinaryToString(&cb.cb_cop2, 1)
-		<< BinaryToHex(&cb.cb_cop2, 1) << std::endl;
+		<< BinaryToHex(&cb.cb_cop2, 1) << "\n";
 	buf << "Additions 1      : "
 		<< std::setw(10) << BinaryToString(cb.cb_add1, CB_L_AD1)
-		<< BinaryToHex(cb.cb_add1, CB_L_AD1) << std::endl;
+		<< BinaryToHex(cb.cb_add1, CB_L_AD1) << "\n";
 	buf << "Additions 2      : "
 		<< std::setw(10) << BinaryToString(cb.cb_add2, CB_L_AD2)
-		<< BinaryToHex(cb.cb_add2, CB_L_AD2) << std::endl;
+		<< BinaryToHex(cb.cb_add2, CB_L_AD2) << "\n";
 	buf << "Additions 3      : "
 		<< std::setw(10) << BinaryToString(cb.cb_add3, CB_L_AD3)
-		<< BinaryToHex(cb.cb_add3, CB_L_AD3) << std::endl;
+		<< BinaryToHex(cb.cb_add3, CB_L_AD3) << "\n";
 	buf << "Additions 4      : "
 		<< std::setw(10) << BinaryToString(cb.cb_add4, CB_L_AD4)
-		<< BinaryToHex(cb.cb_add4, CB_L_AD4) << std::endl;
+		<< BinaryToHex(cb.cb_add4, CB_L_AD4) << "\n";
 	buf << "Additions 5      : "
 		<< std::setw(10) << BinaryToString(cb.cb_add5, CB_L_AD5)
-		<< BinaryToHex(cb.cb_add5, CB_L_AD5) << std::endl;
-	buf << "Command Time     : " << cb.cb_cmd_time << std::endl;
+		<< BinaryToHex(cb.cb_add5, CB_L_AD5) << "\n";
+	buf << "Command Time     : " << cb.cb_cmd_time << "\n";
 	buf << "User Area        : " << std::setw(10)
 		<< BinaryToString(cb.cb_user_area, sizeof(cb.cb_user_area))
 		<< BinaryToHex(cb.cb_user_area, sizeof(cb.cb_user_area))
-		<< std::endl;
+		<< "\n";
 
-	std::string str = buf.str();
-	std::string::iterator it = str.begin();
-	while (it != str.end()) {
+	std::string s = buf.str();
+	std::string::iterator it = s.begin();
+	for (; it != s.end(); it++) {
 		if (*it != '\n' && (*it < 32 || !isprint(*it))) {
 			*it = '.';
 		}
-		it++;
 	}
 
-	return str;
+	return scope.Close(v8::String::New(s.c_str()));
 }
 
 /*
- * Convert Adabas control block to string representation.
- * 'cb' stands for 'control block' (as in Adabas headers).
+ * Sets field of the Adabas control block.
  */
-Handle<Value>
-Command::ToString(const Arguments &args)
+static const char*
+SetField(unsigned char& field, const v8::Local<v8::Value>& value)
 {
-	HandleScope scope;
-	Command *self = ObjectWrap::Unwrap<Command>(args.This());
-	return scope.Close(String::New(self->ToString().c_str()));
+	if (!value->IsUint32() || value->Uint32Value() > 0xFF) {
+		return "argument must be an unsigned 8-bit integer";
+	}
+	field = (unsigned char)(value->Uint32Value());
+	return NULL;
 }
+
+static const char*
+SetField(short unsigned int& field, const v8::Local<v8::Value>& value)
+{
+	if (!value->IsUint32() || value->Uint32Value() > 0xFFFF) {
+		return "argument must be an unsigned 16-bit integer";
+	}
+	field = value->Uint32Value();
+	return NULL;
+}
+
+static const char*
+SetField(unsigned int& field, const v8::Local<v8::Value>& value)
+{
+	if (!value->IsUint32()) {
+		return "argument must be an unsigned 32-bit integer";
+	}
+	field = value->Uint32Value();
+	return NULL;
+}
+
+static const char*
+SetField(unsigned char* field, unsigned int size,
+	const v8::Local<v8::Value>& value)
+{
+	if (!value->IsString()) {
+		return "argument must be a string";
+	}
+
+	v8::String::Value stringValue(value);
+	uint16_t* buffer = *stringValue;
+	unsigned int bufferLength = stringValue.length();
+	if (bufferLength != size) {
+		return "invalid length of the argument";
+	}
+
+	for (unsigned int i = 0; i < size; i++) {
+		field[i] = uint8_t(buffer[i]);
+	}
+
+	return NULL;
+}
+
+static const char*
+SetFieldArray(unsigned char* field, unsigned int size,
+	const v8::Local<v8::Value>& value)
+{
+	if (!value->IsArray()) {
+		return "argument must be an array";
+	}
+
+	v8::Local<v8::Array> array = v8::Local<v8::Array>::Cast(value);
+	if (array->Length() != size) {
+		return "invalid size of the argument";
+	}
+
+	for (unsigned int i = 0; i < size; i++) {
+		field[i] = array->Get(i)->Uint32Value();
+	}
+
+	return NULL;
+}
+
+/*
+ * Sets pointer to buffer data.
+ */
+static const char*
+SetBuffer(void** field, const v8::Local<v8::Value> &value)
+{
+	if (!node::Buffer::HasInstance(value)) {
+		return "argument must be a buffer";
+	}
+	*field = node::Buffer::Data(value->ToObject());
+	return NULL;
+}
+
+/*
+ * Returns field value of the Adabas control block.
+ */
+static v8::Local<v8::Integer>
+GetField(const unsigned char& field)
+{
+	return v8::Integer::New(int(field));
+}
+
+static v8::Local<v8::Integer>
+GetField(const short unsigned int& field)
+{
+	return v8::Integer::New(field);
+}
+
+static v8::Local<v8::Integer>
+GetField(const unsigned int& field)
+{
+	return v8::Integer::New(field);
+}
+
+static v8::Local<v8::String>
+GetField(const unsigned char* field, unsigned int size)
+{
+	return v8::String::New((char*)(field), size);
+}
+
+static v8::Local<v8::Array>
+GetFieldArray(const unsigned char* field, unsigned int size)
+{
+	v8::Local<v8::Array> array = v8::Array::New(size);
+	for (unsigned int i = 0; i < size; i++) {
+		array->Set(i, v8::Integer::New(int(field[i])));
+	}
+	return array;
+}
+
+v8::Handle<v8::Value>
+Command::SetCommandCode(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_cmd_code,
+		sizeof(self->m_cb.cb_cmd_code), args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetCommandId(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_cmd_id, L_CID, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetDbId(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	short unsigned int dbId;
+	const char* rc = SetField(dbId, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+	short unsigned int fileNo = CB_PHYS_FILE_NR(&self->m_cb) ?
+		self->m_cb.alt_cb_file_nr : self->m_cb.cb_file_nr;
+	CB_SET_FD(&self->m_cb, dbId, fileNo);
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetFileNo(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	short unsigned int fileNo;
+	const char* rc = SetField(fileNo, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+	short unsigned dbId = CB_PHYS_FILE_NR(&self->m_cb) ?
+		self->m_cb.alt_cb_db_id : self->m_cb.cb_db_id;
+	CB_SET_FD(&self->m_cb, dbId, fileNo);
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetReturnCode(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	if (CB_PHYS_FILE_NR(&self->m_cb)) {
+                return V8_ERROR("return code used as database ID");
+	}
+	const char* rc = SetField(self->m_cb.cb_return_code, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetIsn(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_isn, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetIsnLowerLimit(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_isn_ll, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetIsnQuantity(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_isn_quantity, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetFormatBufferLength(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_fmt_buf_lng, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetRecordBufferLength(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_rec_buf_lng, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetSearchBufferLength(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_sea_buf_lng, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetValueBufferLength(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_val_buf_lng, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetIsnBufferLength(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_isn_buf_lng, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetCommandOption1(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_cop1, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetCommandOption2(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_cop2, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetAddition1(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetFieldArray(self->m_cb.cb_add1, CB_L_AD1, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetAddition2(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetFieldArray(self->m_cb.cb_add2, CB_L_AD2, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetAddition3(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetFieldArray(self->m_cb.cb_add3, CB_L_AD3, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetAddition4(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetFieldArray(self->m_cb.cb_add4, CB_L_AD4, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetAddition5(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetFieldArray(self->m_cb.cb_add5, CB_L_AD5, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetCommandTime(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetField(self->m_cb.cb_cmd_time, args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetUserArea(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetFieldArray(self->m_cb.cb_user_area,
+		sizeof(self->m_cb.cb_user_area), args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetFormatBuffer(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetBuffer(&self->m_buffers[0], args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetRecordBuffer(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetBuffer(&self->m_buffers[1], args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetSearchBuffer(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetBuffer(&self->m_buffers[2], args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetValueBuffer(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetBuffer(&self->m_buffers[3], args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::SetIsnBuffer(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 1) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	const char* rc = SetBuffer(&self->m_buffers[4], args[0]);
+	if (rc) {
+                return V8_ERROR(rc);
+	}
+
+	return scope.Close(args.This());
+}
+
+v8::Handle<v8::Value>
+Command::GetCommandCode(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_cmd_code,
+		sizeof(self->m_cb.cb_cmd_code)));
+}
+
+v8::Handle<v8::Value>
+Command::GetCommandId(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_cmd_id, L_CID));
+}
+
+v8::Handle<v8::Value>
+Command::GetDbId(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	if (CB_PHYS_FILE_NR(&self->m_cb)) {
+		return scope.Close(GetField(self->m_cb.alt_cb_db_id));
+	}
+	return scope.Close(GetField(self->m_cb.cb_db_id));
+}
+
+v8::Handle<v8::Value>
+Command::GetFileNo(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	if (CB_PHYS_FILE_NR(&self->m_cb)) {
+		return scope.Close(GetField(self->m_cb.alt_cb_file_nr));
+	}
+	return scope.Close(GetField(self->m_cb.cb_file_nr));
+}
+
+v8::Handle<v8::Value>
+Command::GetReturnCode(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	if (CB_PHYS_FILE_NR(&self->m_cb)) {
+                return V8_ERROR("return code used as database ID");
+	}
+	return scope.Close(GetField(self->m_cb.cb_return_code));
+}
+
+v8::Handle<v8::Value>
+Command::GetIsn(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_isn));
+}
+
+v8::Handle<v8::Value>
+Command::GetIsnLowerLimit(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_isn_ll));
+}
+
+v8::Handle<v8::Value>
+Command::GetIsnQuantity(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_isn_quantity));
+}
+
+v8::Handle<v8::Value>
+Command::GetFormatBufferLength(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_fmt_buf_lng));
+}
+
+v8::Handle<v8::Value>
+Command::GetRecordBufferLength(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_rec_buf_lng));
+}
+
+v8::Handle<v8::Value>
+Command::GetSearchBufferLength(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_sea_buf_lng));
+}
+
+v8::Handle<v8::Value>
+Command::GetValueBufferLength(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_val_buf_lng));
+}
+
+v8::Handle<v8::Value>
+Command::GetIsnBufferLength(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_isn_buf_lng));
+}
+
+v8::Handle<v8::Value>
+Command::GetCommandOption1(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_cop1));
+}
+
+v8::Handle<v8::Value>
+Command::GetCommandOption2(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_cop2));
+}
+
+v8::Handle<v8::Value>
+Command::GetAddition1(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetFieldArray(self->m_cb.cb_add1, CB_L_AD1));
+}
+
+v8::Handle<v8::Value>
+Command::GetAddition2(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetFieldArray(self->m_cb.cb_add2, CB_L_AD2));
+}
+
+v8::Handle<v8::Value>
+Command::GetAddition3(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetFieldArray(self->m_cb.cb_add3, CB_L_AD3));
+}
+
+v8::Handle<v8::Value>
+Command::GetAddition4(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetFieldArray(self->m_cb.cb_add4, CB_L_AD4));
+}
+
+v8::Handle<v8::Value>
+Command::GetAddition5(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetFieldArray(self->m_cb.cb_add5, CB_L_AD5));
+}
+
+v8::Handle<v8::Value>
+Command::GetCommandTime(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetField(self->m_cb.cb_cmd_time));
+}
+
+v8::Handle<v8::Value>
+Command::GetUserArea(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(GetFieldArray(self->m_cb.cb_user_area,
+		sizeof(self->m_cb.cb_user_area)));
+}
+
+v8::Handle<v8::Value>
+Command::GetFormatBuffer(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(v8::String::New("not implemented"));
+}
+
+v8::Handle<v8::Value>
+Command::GetRecordBuffer(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(v8::String::New("not implemented"));
+}
+
+v8::Handle<v8::Value>
+Command::GetSearchBuffer(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(v8::String::New("not implemented"));
+}
+
+v8::Handle<v8::Value>
+Command::GetValueBuffer(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(v8::String::New("not implemented"));
+}
+
+v8::Handle<v8::Value>
+Command::GetIsnBuffer(const v8::Arguments& args)
+{
+	v8::HandleScope scope;
+	Command* self = ObjectWrap::Unwrap<Command>(args.This());
+
+	if (args.Length() != 0) {
+                return V8_ERROR("wrong number of arguments");
+	}
+
+	return scope.Close(v8::String::New("not implemented"));
+}
+
+} // namespace node_adabas
